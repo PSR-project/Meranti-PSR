@@ -1,0 +1,174 @@
+import random
+import math
+import time 
+import numpy as np
+import sympy
+from sympy import Eq, diff, Symbol, var, symbols, cos, pi, sin, simplify, nsolve, solveset, Line
+from scipy.optimize import fsolve
+from shapely.geometry import LineString
+import matplotlib.pyplot as plt
+
+
+#local variables, some of which will be given depending on the simulation - I put my own values in just so I am able to do tests 
+S = 1
+Z_0 = 5
+A = .1
+T = 10
+flow_velocity = 2.5
+outer_radius = Z_0 + A
+a = A/S
+z_0 = Z_0/S
+
+
+
+#small helper functions that make it easier, cleaner and faster to calculate specific information
+def zw(x):
+    t = Symbol('t')
+    return z_0*(1+a*cos(2*pi*x))
+
+def calc_Vx(magnitude, angle):
+    return magnitude*cos(math.radians(angle))
+
+def calc_Vy(magnitude, angle):
+    return magnitude*sin(math.radians(angle))
+
+def magnitude(Vt):
+    return math.hypot(Vt[0],Vt[1])
+
+#returns angle in radians
+def angle(Vt):
+    return math.atan(Vt[1]/Vt[0])
+
+#randomly initalizes Xinit, Zinit based on initialization criteria
+def initialize_Position():
+    x_init = random.uniform(0,S)/S
+    z_init = random.uniform(-outer_radius, outer_radius)/S 
+    wall = zw(x_init)
+    while abs(wall) < z_init:
+        z_init = random.uniform(-outer_radius, outer_radius)
+    coordinates = np.array([x_init,z_init])
+    print("The inital coordinates X_0,Z_0: " + str(coordinates))
+    plt.plot(coordinates[0],coordinates[1])
+    return coordinates
+
+#intializes Vinit based on initialization criteria with the form [Vx, Vy]
+def initialize_Velocity():
+    random_angle = random.uniform(0,180)
+    random_x = random.gauss(0,1)
+    random_z = random.gauss(0,1)
+    random_magnitude = math.hypot(random_x, random_z)
+    random_components = np.array([random.gauss(0,1), random.gauss(0,1)])
+    Vf = np.array([flow_velocity, 0])
+    V_i = random_components + Vf
+    
+    print("The initial velocity components Vx, Vz are " + str(V_i))
+    return V_i
+
+def binary_search(coordinates, t_xi_coordinates, t_xi, Vt, g_x):
+    a = angle(Vt)
+    if t_xi == 0:
+        return t_xi
+    else:
+        t = Symbol('t')
+        midpoint = magnitude(Vt)*t_xi/2
+        mid_coordinates = np.array([coordinates[0] + midpoint*cos(a), coordinates[1] + midpoint*sin(a)])
+        new_line = Line((coordinates[0],coordinates[1]), (t_xi_coordinates[0],t_xi_coordinates[1]))
+        print(str(simplify(new_line)))
+        F_x = new_line - g_x
+        t_x = nsolve(F_x,t,1)
+        print(str(t_x))
+        
+
+
+#returns time t of next collision where zw(xt) = zt
+#two equations: f_x = zt, g_x = zw(xt) (or -zw(xt) depending on if Vy is +/-)
+#solve for t 
+def next_Collision(Vt, coordinates):
+    V_x = Vt[0]
+    V_z = Vt[1]
+    mag = magnitude(Vt)
+    a = angle(Vt)
+    t = Symbol('t')
+    line_eq = t*mag*sin(a) + coordinates[1]
+    if V_z > 0:
+        wall_eq = z_0*(1+a*cos(2*pi*(coordinates[0]+t*mag*cos(a))))
+    else:
+        wall_eq = - z_0*(1+a*cos(2*pi*(coordinates[0]+t*mag*cos(a))))
+    F_x = line_eq - wall_eq
+    print(str(F_x))
+    t_xi = nsolve(F_x, t, 1)
+    print(str(t_xi))
+    t_xi_coordinates= calculatePosition(coordinates, t_xi, Vt)
+    binary_search(coordinates, t_xi_coordinates, t_xi, Vt, wall_eq)
+    print("The t value is " + str(t_xi))
+    return t_xi
+    
+
+#calculates position after t time given coordinates and velocity
+def calculatePosition(coordinates, t, Vt):
+    theta = angle(Vt)
+    xt = coordinates[0] + t*magnitude(Vt)*cos(theta)
+    zt = coordinates[1] + t*magnitude(Vt)*sin(theta)
+    coordinates = np.array([xt, zt])
+    print("New X,Z values at time of collision : " + str(coordinates))
+    return coordinates
+
+
+#returns new velocity [Vx,Vy] after the particle bounces off the wall 
+def calculate_newDirection(Vt, coordinates, t_xi):
+    print("calc new direction " + str(coordinates))
+    xt = coordinates[0]
+    zt = coordinates[1]
+    t = Symbol('t')
+    d = diff(z_0*(1+a*cos(2*pi*(xt+t*magnitude(Vt)*cos(angle(Vt))))))
+    wall_derivative = simplify(d.subs(t,t_xi))
+    perpendicular_line = np.array([-wall_derivative, 1])
+    perpendicular_magnitude = magnitude(perpendicular_line)
+    incidence_magnitude = magnitude(Vt)*t_xi
+    inflection_angle = Vt.angle_between(perpendicular_line)
+    print(inflection_angle)
+    math.cos(np.dot(Vt, perpendicular_line)/(incidence_magnitude*perpendicular_magnitude))*180/pi
+    print(str(inflection_angle))
+    mag = magnitude(Vt)
+    direction = np.array([calc_Vx(mag, 180 - inflection_angle), calc_Vy(mag, 180-inflection_angle)])
+    print(str(direction))
+    print(str(direction))
+    return direction
+
+
+#contains the while loop that continues until the simulation duration equals time T
+def tracing(V_init, coordinates, T):
+    collisions = 0
+    Vt = np.array([V_init[0], V_init[1]])
+    print(str(Vt))
+    print(str(coordinates))
+    if V_init[1] == 0 and abs(coordinates[1]) < Z_0 - A:
+        xt = coordinates[0] + t*magnitude(Vt)
+        zt = coordinates[1]
+        coordinates = np.array([xt, zt])
+    else:
+        simulation_duration = 0
+        while True:
+            t_xi = next_Collision(Vt, coordinates)
+            print("The time of next collision is " + str(t_xi))
+            print("The current simulation duration is " + str(simulation_duration))
+            if t_xi + simulation_duration > T:
+                coordinates = calculatePosition(coordinates, T-simulation_duration, Vt)
+                break
+            else:
+                coordinates = np.array([calculatePosition(coordinates, t_xi, Vt)[0], calculatePosition(coordinates, t_xi, Vt)[1]])
+                simulation_duration = simulation_duration + t_xi
+                collisions = collisions + 1
+                Vt = np.array([calculate_newDirection(Vt, coordinates, t_xi)[0], calculate_newDirection(Vt, coordinates, t_xi)[1]])
+    return coordinates               
+        
+
+def main():
+    coordinates = initialize_Position()
+    V_init = initialize_Velocity()
+    tracing(V_init, coordinates, T)
+
+    
+
+if __name__ == '__main__':
+    main()
