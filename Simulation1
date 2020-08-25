@@ -1,0 +1,174 @@
+import random
+import math
+import time 
+import numpy as np
+import sympy
+from sympy import Eq, diff, Symbol, var, symbols, cos, pi, sin, simplify, nsolve, Line, solveset, Interval, atan
+from scipy.optimize import fsolve
+from shapely.geometry import LineString
+import matplotlib.pyplot as plt
+import wolframalpha
+
+
+#local variables, some of which will be given depending on the simulation - I put my own values in just so I am able to do tests 
+S = 1
+Z_0 = 5
+A = .1
+T = 20
+flow_velocity = 2.5
+outer_radius = Z_0 + A
+a = A/S
+z_0 = Z_0/S
+
+
+#small helper functions that make it easier, cleaner and faster to calculate specific information
+def zw(x):
+    t = Symbol('t')
+    return z_0*(1+a*cos(2*pi*x))
+
+def calc_Vx(magnitude, angle):
+    return magnitude*cos(math.radians(angle))
+
+def calc_Vy(magnitude, angle):
+    return magnitude*sin(math.radians(angle))
+
+def magnitude(Vt):
+    return math.hypot(Vt[0],Vt[1])
+
+#returns angle in radians
+def angle(Vt):
+    return math.atan(Vt[1]/Vt[0])
+
+#randomly initalizes Xinit, Zinit based on initialization criteria
+def initialize_Position():
+    x_init = random.uniform(0,S)/S
+    z_init = random.uniform(-outer_radius, outer_radius)/S 
+    wall = zw(x_init)
+    while abs(wall) < z_init:
+        z_init = random.uniform(-outer_radius, outer_radius)
+    coordinates = np.array([x_init,z_init])
+    print("The inital coordinates X_0,Z_0: " + str(coordinates))
+    plt.plot(coordinates[0],coordinates[1])
+    return coordinates
+
+#intializes Vinit based on initialization criteria with the form [Vx, Vy]
+def initialize_Velocity():
+    random_angle = random.uniform(0,180)
+    random_x = random.gauss(0,1)
+    random_z = random.gauss(0,1)
+    random_magnitude = math.hypot(random_x, random_z)
+    random_components = np.array([random.gauss(0,1), random.gauss(0,1)])
+    Vf = np.array([flow_velocity, 0])
+    V_i = random_components + Vf
+    print("The initial velocity components Vx, Vz are " + str(V_i))
+    return V_i
+
+#returns time t of next collision where zw(xt) = zt
+#two equations: f_x = zt, g_x = zw(xt) (or -zw(xt) depending on if Vy is +/-)
+#solve for t 
+def next_Collision(Vt, coordinates):
+    V_x = Vt[0]
+    V_z = Vt[1]
+    mag = magnitude(Vt)
+    ang = angle(Vt)
+    t = Symbol('t')
+    line_eq =t*mag*sin(ang) + coordinates[1]
+    print(str(line_eq))
+    if V_z > 0:
+        wall_eq = z_0*(1+a*cos(2*pi*(coordinates[0]+t*mag*cos(ang))))
+    else:
+        wall_eq = - z_0*(1+a*cos(2*pi*(coordinates[1]+t*mag*cos(ang))))
+    F_x = line_eq - wall_eq
+    print(str(F_x))
+    t_xi = nsolve(F_x, t, 1)
+    print("The collision point is at t = " + str(t_xi))
+    return t_xi
+    
+
+#calculates position after t time given coordinates and velocity
+def calculatePosition(coordinates, t, Vt):
+    theta = angle(Vt)
+    xt = coordinates[0] + t*magnitude(Vt)*cos(theta)
+    zt = coordinates[1] + t*magnitude(Vt)*sin(theta)
+    coordinates = np.array([xt, zt])
+    return coordinates
+
+
+#returns new velocity [Vx,Vy] after the particle bounces off the wall
+
+def calculate_newDirection(Vt, coordinates, init_coordinates, t_xi):
+    xt = coordinates[0]
+    zt = coordinates[1]
+    mag = magnitude(Vt)
+    x = Symbol('x')
+    wall_eq = z_0*(1+a*cos(2*pi*x))
+    wall_derivative = diff(wall_eq)
+    slope_1 = -1/(wall_derivative.subs(x, xt))
+    y = wall_eq.subs(x,xt)
+    perpendicular_line = (slope_1)*(x-xt)+y
+    print(str(perpendicular_line))
+    slope_2 = (coordinates[1]-init_coordinates[1])/(coordinates[0]-init_coordinates[0])
+    inflection_angle = math.degrees(atan(abs((slope_2-slope_1)/(1+slope_2*slope_1))))
+    print("Inflection angle: " + str(simplify(inflection_angle)))
+    direction = np.array([calc_Vx(mag, 90 - inflection_angle), calc_Vy(mag,90 -inflection_angle)])
+    if Vt[1] > 0:
+        direction = np.array([direction[0],-direction[1]])
+    print(str(direction))
+    return direction
+
+
+#contains the while loop that continues until the simulation duration equals time T
+def tracing(V_init, coordinates, T):
+    collisions = 0
+    Vt = np.array([V_init[0], V_init[1]])
+    if V_init[1] == 0 and abs(coordinates[1]) < Z_0 - A:
+        xt = coordinates[0] + t*magnitude(Vt)
+        zt = coordinates[1]
+        coordinates = np.array([xt, zt])
+    else:
+        simulation_duration = 0
+        plt.text(coordinates[0], coordinates[1], (" " + str(coordinates[0]) + ", " + str(coordinates[1])))
+        while True:
+            t_xi = next_Collision(Vt, coordinates)
+            init_coordinates = np.array([coordinates[0],coordinates[1]])
+            print("The time of next collision is " + str(t_xi))
+            print("The current simulation duration is " + str(simulation_duration))
+            if t_xi + simulation_duration > T:
+                coordinates = np.array([calculatePosition(coordinates, T-simulation_duration, Vt)[0], calculatePosition(coordinates, T-simulation_duration, Vt)[1]])
+                print(str(coordinates))
+                x_values = [init_coordinates[0],coordinates[0]]
+                y_values = [init_coordinates[1],coordinates[1]]
+                plt.plot(x_values,y_values)
+                break
+            else:
+                coordinates = np.array([calculatePosition(coordinates, t_xi, Vt)[0], calculatePosition(coordinates, t_xi, Vt)[1]])
+                print("The new coordinates at collision time are " + str(coordinates))
+                x_values = [init_coordinates[0],coordinates[0]]
+                y_values = [init_coordinates[1],coordinates[1]]
+                plt.plot(x_values,y_values)
+                simulation_duration = simulation_duration + t_xi
+                collisions = collisions + 1
+                Vt = np.array([calculate_newDirection(Vt, coordinates, init_coordinates, t_xi)[0], calculate_newDirection(Vt, coordinates, init_coordinates, t_xi)[1]])
+                
+    x_max = coordinates[0]+1
+    x = np.arange(-1,int(x_max),0.01)   # start,stop,step
+    y = z_0*(1 + a*np.cos(2*x*np.pi))
+    plt.plot(x,y, 'b-', x,-y, 'b-')
+    plt.xlabel('x axis')
+    plt.ylabel('z axis')
+    plt.show()
+    return coordinates               
+        
+
+def main():
+    coordinates = initialize_Position()
+    V_init = initialize_Velocity()
+    print("mag" + str(magnitude(V_init)))
+    print("angle" + str(angle(V_init)))
+    tracing(V_init, coordinates, T)
+
+    
+
+if __name__ == '__main__':
+    main()
+
